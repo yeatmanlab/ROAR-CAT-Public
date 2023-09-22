@@ -1,0 +1,579 @@
+---
+title: "ROAR-CAT: Parameter Invariance Study"
+author: "Wanjing Anya Ma"
+date:  "`r Sys.Date()`"
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_depth: 4
+    theme: cosmo
+    highlight: tango
+---
+
+# Load packages
+
+```{r, message=FALSE, warning = FALSE, echo = FALSE}
+library("knitr") # for rendering the RMarkdown file
+library("tidyverse") # for data wrangling 
+library(dplyr)
+library(mirt)
+library('ggpubr')
+library(Metrics)
+library(hash)
+library(ggplot2)
+library(GGally)
+library(gridExtra)
+library("catR")
+library(cocor)
+library(eRm)
+library(difR)
+library(extrafont)
+library(here)
+```
+
+# Settings
+
+```{r echo = FALSE}
+# sets how code looks in knitted document
+opts_chunk$set(comment = "")
+
+# suppresses warning about grouping 
+options(dplyr.summarise.inform = F)
+```
+
+# Data
+
+## Data Loading
+```{r message = FALSE, warning = FALSE, results='hide'}
+df.data <- read_csv(here::here('data/school/roar_swr_rp_grouped_anonymized.csv'))
+
+df.data.rt <-  read_csv(here::here('data/school/roar_swr_rp_grouped_anonymized_rt.csv'))
+
+df.word_params <- read_csv(here::here('corpus/item_bank_v2.csv'))
+```
+
+## Data wrangling 
+
+```{r}
+df.word_params.dic <- df.word_params %>% 
+  dplyr :: rename(word = words) %>% 
+  select(word, realpseudo)
+```
+
+# Rasch Model 
+```{r message = FALSE, warning = FALSE, results='hide'}
+df.response.calibration <- df.data %>% 
+    filter(groupId == 'Calibration') %>% 
+    select(-c(pid, ageMonths, groupId, subGroup, grade, session))
+
+r.m.g.calibration <- mirt(df.response.calibration, 1, itemtype = "Rasch", guess = 0.5, SE = TRUE, 
+              technical = list(NCYCLES = 5000))
+```
+
+# Prepare Item Parameters
+```{r message = FALSE, warning = FALSE, results='hide'}
+func.estimate <- function(df, id){
+  df.response <- df %>% 
+    filter(groupId == id) %>% 
+    select(-c(ageMonths, groupId, subGroup, grade, session))
+  scores <- fscores(r.m.g.calibration, response.pattern = df.response %>% select(-pid), theta_lim = c(-4, 4))
+  df.matrix <- as_tibble(scores)
+  df.estimate <- df.matrix %>% 
+    dplyr :: rename(thetaEstimate = F1, thetaSE = SE_F1) %>% 
+    add_column(pid = df.response$pid, groupId = id) %>% 
+    select(pid, everything())
+  
+  return (df.estimate)
+}
+```
+
+```{r message = FALSE, warning = FALSE, results='hide'}
+func.estimate.thetas.groups <- function(df){
+  df.thetas.calibration <- func.estimate(df, 'Calibration')
+  df.thetas.A <- func.estimate(df, 'A')
+  df.thetas.B <- func.estimate(df, 'B')
+  df.thetas.C <- func.estimate(df, 'C')
+  df.thetas <- do.call("rbind", list(df.thetas.calibration , df.thetas.A, df.thetas.B, df.thetas.C))
+  return (df.thetas)
+}
+
+df.thetas <- func.estimate.thetas.groups(df.data %>% filter(session == 1))
+```
+
+
+```{r message = FALSE, warning = FALSE, results='hide'}
+rasch.model.params <- function (df, id) {
+  df.response <- df %>% 
+    filter(groupId == id) %>% 
+    select(-c(pid, ageMonths, groupId, subGroup, grade, session))
+  
+  r.m.g <- mirt(df.response, 1, itemtype = "Rasch", guess = 0.5, SE = TRUE, 
+              technical = list(NCYCLES = 200))
+  
+  params <- data.frame(coef(r.m.g, IRTpars = TRUE, simplify = TRUE))$items.b
+  
+  return (params)
+}
+```
+
+```{r message = FALSE, warning = FALSE, results='hide'}
+create.params.table <- function(df) {
+  df.result <- df %>% 
+    filter(pid == df$pid[1]) %>% 
+    select(-c(pid, ageMonths, groupId, subGroup, grade, session)) %>% 
+    pivot_longer(cols= everything(), 
+                 names_prefix = "correct.", 
+                 names_to = "word") %>% 
+    select(word)
+  
+  list.names <- c("Calibration", "A", "B", "C")
+  for (i in (1: 4)) {
+    print(i)
+    df.result <- df.result %>% 
+      add_column("{list.names[i]}":=rasch.model.params(df, list.names[i]))
+  }
+  return (df.result)
+}
+```
+
+```{r message = FALSE, warning = FALSE, results='hide'}
+df.params <- create.params.table(df.data %>% filter(session == 1))
+
+#df.params.2 <- create.params.table(df.data.2)
+```
+
+```{r}
+df.params.ready <- df.word_params %>% 
+  dplyr :: rename(word = words) %>% 
+  right_join(df.params, by = "word") %>% 
+  arrange(word) %>% 
+  relocate(word, Calibration, A, B, C)
+```
+
+
+```{r}
+df.calibration.thetas <- df.thetas %>% filter(groupId == "Calibration")
+hist(df.params$Calibration)
+hist(df.calibration.thetas$thetaEstimate)
+```
+
+
+```{r}
+df.params.ready.longer <- df.params.ready %>% 
+  pivot_longer(c('A','B','C'), names_to = "groupId", values_to = "b.param")
+
+# df.params.ready.2 <- df.params.2 %>% 
+#   left_join(df.word_params %>% 
+#   dplyr :: rename(word = 'words') %>% 
+#   select(word, realpseudo), by = 'word') %>% 
+#   relocate(word, realpseudo)
+# 
+# df.params.ready.longer.2 <- df.params.ready.2 %>% 
+#   pivot_longer(c('A','B','C','D','E'), names_to = "groupId", values_to = "b.param")
+```
+```{r}
+# df.params.ready.longer.2 <- df.params.ready %>% 
+#   pivot_longer(c("Calibration", 'A','B','C'), names_to = "groupId", values_to = "b.param")
+```
+
+
+# Item Parameter Distribution
+```{r}
+ggplot(df.params.ready) + 
+  geom_histogram(aes(x = Calibration), color="black", fill="grey", bins = 20) + 
+  facet_grid(rows = vars(realpseudo), switch = "both") + 
+  labs(x = "item difficulty",
+       y = "count") + 
+  theme(strip.text.y = element_text(
+        size = 12, color = "black"), 
+        axis.text=element_text(size=12), 
+        axis.title=element_text(size=12))
+```
+# Visualizations
+## Discriptive Stats 
+```{r}
+group.names <- c("Calibration" = "Calibration", 
+                 "A" = "Marigold", 
+                 "B" = "Orchid", 
+                 "C" = "Snowdrops", 
+                 "D" = "Poppy")
+
+group.names.sample.size <- c("Calibration" = "Calibration n = 306", 
+                 "A" = "Marigold n = 1248", 
+                 "B" = "Orchid n = 476", 
+                 "C" = "Snowdrops n = 109", 
+                 "D" = "Poppy n = 811")
+
+df.data.renamed <- df.data %>% 
+  filter(session == 1) %>% 
+  mutate(groupId = group.names[groupId]) %>% 
+  mutate(age = round(ageMonths/12, digits = 0))
+```
+
+
+```{r}
+df.data.rt.summary <- df.data.rt %>% 
+  filter(session == 1) %>% 
+  pivot_longer(cols = contains("rt."), names_to = "word", values_to = "rt") %>%
+  mutate(word = substring(word, 4,)) %>% 
+  filter(rt >= 200, rt <= 5000, groupId != "D") %>% 
+  group_by(pid) %>% 
+  dplyr :: summarise(mean_rt = mean(rt))
+
+df.descriptive.stats <- df.data.renamed %>% 
+  select(pid, ageMonths) %>% 
+  inner_join(df.thetas, by = c("pid")) %>% 
+  inner_join(df.data.rt.summary, by = c("pid")) %>% 
+  relocate(pid, groupId, ageMonths, thetaEstimate, thetaSE, mean_rt) %>% 
+  mutate(groupId = group.names[groupId], mean_rt_log = log(mean_rt), age = ageMonths/12) 
+
+df.descriptive.stats.longer.table <- df.descriptive.stats %>% 
+  pivot_longer(cols = c("thetaEstimate", "thetaSE", "mean_rt_log", "age"), 
+               names_to = "metric", 
+               values_to = "value")
+
+df.descriptive.stats.longer.plot <- df.descriptive.stats %>% 
+  pivot_longer(cols = c("ageMonths", "thetaEstimate", "thetaSE", "mean_rt_log"), 
+               names_to = "metric", 
+               values_to = "value")
+```
+
+```{r}
+df.descriptive.stats.summary <- df.descriptive.stats.longer.table %>% 
+  group_by(metric, groupId) %>% 
+  summarise(n = n(), mean = median(value, na.rm = TRUE), sd = sd(value, na.rm = TRUE))
+
+```
+```{r}
+df.descriptive.stats.summary
+```
+
+
+```{r}
+custom_labeller <- labeller(metric = c(ageMonths = "age (months)", 
+                       mean_rt_log = "mean response time (ms) in log scale", 
+                       thetaEstimate = "theta estimate", 
+                       thetaSE = "standard error of theta estimate"))
+```
+
+```{r}
+g.figure.study1.2 <- ggplot(df.descriptive.stats.longer.plot %>% 
+  filter((groupId != "Calibration") | (value < 240)),
+       aes(x = groupId,
+           y = value,
+           color = groupId)) +
+  labs(y = "Metric",
+       x = "Groups") +
+  geom_boxplot(width = 0.3, na.rm = TRUE) +
+  
+  # geom_jitter(position=position_jitter(w=0.2, h=0.1), size = 0.5) +
+  # geom_errorbar(data = df.descriptive.stats.summary , mapping = aes(x = groupId, y = mean, ymin = mean - sd, ymax = mean + sd), size=0.4, color="black", width=.1, facet_wrap = ~metric) +
+  # geom_point(data = df.descriptive.stats.summary, aes(x = groupId, y = mean), size=1.5, color="black", facet_wrap = ~metric) +
+  facet_wrap(~metric, scales = "free", labeller = custom_labeller) +
+  theme(legend.position="bottom")
+
+ggsave("../plots/roar_cat_study1_figure2.png")
+ggsave("../plots/roar_cat_study1_figure2.pdf")
+
+```
+
+# Parameter Invariance
+## Group Effect: item difficulty
+
+```{r}
+  
+function.compare.params <- function(df, group1, group2, type){
+  df.tmp <- df %>% 
+    filter(realpseudo == type)
+  
+  x <- df.tmp[[group1]] 
+  y <- df.tmp[[group2]]
+  
+  correlation <- round(cor(x, y), digit = 2)
+
+# Perform linear regression
+  lm_model <- lm(y ~ x)
+
+# Extract the slope and intercept
+  slope <- round(coef(lm_model)[[2]], digit = 2)
+  intercept <- round(coef(lm_model)[[1]], digit = 2)
+  
+  return (c(group1, group2, type, correlation, slope, intercept))
+  
+}
+```
+
+```{r fig.width=10,fig.height=6}
+# Add sample size 
+g.item.difficulty <- ggplot(df.params.ready.longer %>% mutate(groupId = group.names[groupId]) %>% dplyr :: rename(`item type` = realpseudo), mapping = aes(x = Calibration,
+                     y = b.param, color = `item type`, group = `item type`)) +
+  labs(x = "Item difficulty parameter from calibration",
+       y = "Item difficulty parameter from group") +
+  facet_grid(cols = vars(groupId)) + 
+  stat_cor(cor.coef.name = 'r', aes(label = ..r.label..), size = 15) +
+  # stat_cor(aes(label = paste("spearman", ..r.label.., sep = ":")), method = "spearman", vjust = 1) + 
+  #stat_cor(aes(label = ..r.label..), method = "pearson") +
+  theme(legend.position="bottom") +
+  geom_text(aes(label = as.character(word)), hjust=0.4, vjust=0, size = 8) + 
+  geom_abline(slope=1, intercept = 0, color = "grey", linetype = "dotted", size = 5) + 
+  #xlim(-4, 5) + ylim(-4, 8) +
+  scale_y_continuous(breaks = round(seq(-4, 13, by = 2),1)) +
+  scale_x_continuous(breaks = round(seq(-4, 5, by = 2),1)) +
+  theme(legend.text = element_text(size = 36), 
+        legend.title = element_text(size = 36),
+        strip.text = element_text(
+        size = 36, color = "black"),
+        axis.text=element_text(size=36),
+        strip.text.y = element_text(
+        size = 36, color = "black"), 
+        panel.spacing = unit(6, "lines"), 
+        legend.spacing = unit(6.0,'cm'), 
+        plot.margin = margin(1.5,1.5,1.5,1.5, "cm"),
+        axis.title=element_text(size=36), legend.position = "bottom") 
+  g.item.difficulty
+  
+ggsave("../plots/roar_cat_study1_figure3.png")
+ggsave("../plots/roar_cat_study1_figure3.pdf")
+  
+# ggplot(df.params.ready.longer %>% mutate(groupId = group.names[groupId]) %>% dplyr :: rename(`item type` = realpseudo), mapping = aes(x = Calibration,
+#                      y = b.param)) +
+#   labs(x = "item difficulty parameter from calibration",
+#        y = "item difficulty parameter from group") +
+#   facet_grid(cols = vars(groupId)) + 
+#   stat_cor(cor.coef.name = 'r', aes(label = ..r.label..), size = 15) +
+#   # stat_cor(aes(label = paste("spearman", ..r.label.., sep = ":")), method = "spearman", vjust = 1) + 
+#   #stat_cor(aes(label = ..r.label..), method = "pearson") +
+#   theme(legend.position="bottom") +
+#   geom_text(aes(label = as.character(word)), hjust=0.4, vjust=0, size = 8) + 
+#   geom_abline(slope=1, intercept = 0, color = "grey", linetype = "dotted", size = 5) + 
+#   #xlim(-4, 5) + ylim(-4, 8) +
+#   scale_y_continuous(breaks = round(seq(-4, 13, by = 2),1)) +
+#   scale_x_continuous(breaks = round(seq(-4, 5, by = 2),1)) +
+#   theme(legend.text = element_text(size = 36), 
+#         legend.title = element_text(size = 36),
+#         strip.text = element_text(
+#         size = 36, color = "black"),
+#         axis.text=element_text(size=36),
+#         strip.text.y = element_text(
+#         size = 36, color = "black"), 
+#         panel.spacing = unit(6, "lines"), 
+#         legend.spacing = unit(6.0,'cm'), 
+#         plot.margin = margin(1.5,1.5,1.5,1.5, "cm"),
+#         axis.title=element_text(size=36), legend.position = "bottom") 
+```
+```{r}
+df.params.ready.longer %>% 
+  filter(word == "rackle")
+```
+
+## group effect: response time 
+```{r}
+df.data.rt.grouped <- df.data.rt %>% 
+  filter(session == 1) %>% 
+  pivot_longer(cols = contains("rt."), names_to = "word", values_to = "rt") %>%
+  mutate(word = substring(word, 4,)) %>% 
+  filter(rt >= 200, rt <= 5000, groupId != "D") %>% 
+  group_by(groupId, word) %>% 
+  dplyr :: summarise(mean_rt = mean(log(rt))) 
+
+df.data.rt.ready <- df.data.rt.grouped %>% 
+  filter(groupId != "Calibration") %>% 
+  left_join(df.data.rt.grouped %>% 
+  filter(groupId == "Calibration"), by = "word") %>% 
+  dplyr :: rename(Calibration = mean_rt.y, rt = mean_rt.x, groupId = groupId.x) %>% 
+  select(-groupId.y) %>% 
+  left_join(df.word_params.dic, by = "word")
+```
+```{r}
+df.params.rt <- df.data.rt.grouped %>% 
+  pivot_wider(names_from = groupId, values_from = mean_rt) %>% 
+  left_join(df.word_params.dic, by = "word")
+```
+```{r fig.width=10,fig.height=6}
+g.response.time <- ggplot(df.data.rt.ready %>% mutate(groupId = group.names[groupId]), mapping = aes(x = Calibration,
+                     y = rt, color = realpseudo, group = realpseudo)) +
+  labs(x = "Mean log response time (ms) from calibration",
+       y = "Mean log response time (ms) from group") +
+  facet_grid(cols = vars(groupId)) + 
+  stat_cor(cor.coef.name = 'r', aes(label = ..r.label..), size = 15) +
+  # stat_cor(aes(label = paste("spearman", ..r.label.., sep = ":")), method = "spearman", vjust = 1) + 
+  #stat_cor(aes(label = ..r.label..), method = "pearson") +
+  theme(legend.position="bottom") +
+  geom_text(aes(label = as.character(word)), hjust=0.4, vjust=0, size = 8) + 
+  geom_abline(slope=1, intercept = 0, color = "grey", linetype = "dotted", size = 5) +
+  theme(legend.position="bottom") +
+  geom_abline(slope=1, intercept = 0, color = "grey", linetype = "dotted") + 
+  xlim(6.6, 7.2) +
+  theme(strip.text.y = element_text(
+        size = 10, color = "black"), 
+        axis.text=element_text(size=10), 
+        axis.title=element_text(size=10)) + 
+  theme(legend.text = element_text(size = 36), 
+        legend.title = element_text(size = 36),
+        strip.text = element_text(
+        size = 36, color = "black"),
+        axis.text=element_text(size=36),
+        strip.text.y = element_text(
+        size = 36, color = "black"), 
+        panel.spacing = unit(6, "lines"), 
+        legend.spacing = unit(6.0,'cm'), 
+        plot.margin = margin(1.5,1.5,1.5,1.5, "cm"),
+        axis.title=element_text(size=36), legend.position = "bottom") 
+g.response.time
+
+ggsave("../plots/roar_cat_study1_figure4.png")
+ggsave("../plots/roar_cat_study1_figure4.pdf")
+```
+## compare intercept, slop, and cor
+```{r}
+df.compare.difficulty <- data.frame(rbind(function.compare.params(df.params.ready, "Calibration", "A", "real"),
+function.compare.params(df.params.ready, "Calibration", "A", "pseudo"),
+function.compare.params(df.params.ready, "Calibration", "B", "real"),
+function.compare.params(df.params.ready, "Calibration", "B", "pseudo"),
+function.compare.params(df.params.ready, "Calibration", "C", "real"),
+function.compare.params(df.params.ready, "Calibration", "C", "pseudo"))) 
+
+colnames(df.compare.difficulty) <- c("group1", "group2","realpseudo", "correlation", "slope", "intercept")
+```
+
+
+```{r}
+df.compare.rt <- data.frame(rbind(
+function.compare.params(df.params.rt, "Calibration", "A", "real"),
+function.compare.params(df.params.rt, "Calibration", "A", "pseudo"),
+function.compare.params(df.params.rt, "Calibration", "B", "real"),
+function.compare.params(df.params.rt, "Calibration", "B", "pseudo"),
+function.compare.params(df.params.rt, "Calibration", "C", "real"),
+function.compare.params(df.params.rt, "Calibration", "C", "pseudo"))) 
+
+colnames(df.compare.rt) <- c("group1", "group2","realpseudo", "correlation", "slope", "intercept")
+```
+
+```{r}
+df.compare <- df.compare.difficulty %>% 
+  add_column(metric = "item difficulty") %>% 
+  rbind(df.compare.rt %>% add_column(metric = "log response time"))
+```
+```{r}
+view(df.compare)
+```
+
+
+```{r fig.height = 3, fig.width=2.5}
+g.item.difficulty / g.response.time
+```
+
+# Correlation Stats
+```{r}
+df.params.ready.real.only <- df.params.ready %>% 
+  filter(realpseudo == "real")
+
+df.params.ready.pseudo.only <- df.params.ready %>% 
+  filter(realpseudo == "pseudo")
+```
+
+```{r}
+cor.test(df.params.ready.real.only$Calibration, df.params.ready.real.only$A)
+cor.test(df.params.ready.real.only$Calibration, df.params.ready.real.only$B)
+cor.test(df.params.ready.real.only$Calibration, df.params.ready.real.only$C)
+```
+
+```{r}
+cor.test(df.params.ready.pseudo.only$Calibration, df.params.ready.pseudo.only$A)
+cor.test(df.params.ready.pseudo.only$Calibration, df.params.ready.pseudo.only$B)
+cor.test(df.params.ready.pseudo.only$Calibration, df.params.ready.pseudo.only$C)
+```
+```{r}
+result <- cor.test(df.params.ready.pseudo.only$Calibration, df.params.ready.pseudo.only$C)
+result$
+```
+
+# Randomize group effect 
+```{r message = FALSE, warning = FALSE, results='hide'}
+rasch.model.params2 <- function (df, id) {
+  df.response <- df %>% 
+    filter(groupId == id) %>% 
+    select(-c(groupId))
+  
+  r.m.g <- mirt(as.matrix(df.response), 1, itemtype = "Rasch", guess = 0.5, SE = TRUE, 
+              technical = list(NCYCLES = 200))
+  
+  params <- data.frame(coef(r.m.g, IRTpars = TRUE, simplify = TRUE))$items.b
+  
+  params
+}
+```
+
+```{r}
+df.data2 <- df.data %>% 
+  filter(groupId != "D", session == 1)
+```
+
+
+```{r message = FALSE, warning = FALSE, results='hide'}
+list.corA <- NULL
+list.corB <- NULL
+list.corC <- NULL
+list.corA.lower <- NULL
+list.corB.lower <- NULL
+list.corC.lower <- NULL
+list.corA.higher <- NULL
+list.corB.higher <- NULL
+list.corC.higher <- NULL
+
+for (i in 1:50){
+  print(i)
+  df.data.random.group.id <- df.data2 %>% 
+  mutate(groupId = sample(sample(c("Calibration", "A", "B", "C"), length(df.data2$groupId), 
+                                 prob = c(306/1960,1230/1960, 315/1960, 109/1960), replace = TRUE))) %>% 
+  select(-c(pid, subGroup, ageMonths, grade, session))
+  
+  list <- df.data.random.group.id %>% 
+    group_by(groupId) %>% 
+    summarise(across(everything(), mean))  %>% 
+    select(-groupId) %>% 
+    as.matrix() %>% 
+    as.numeric()
+  
+  if(!any(list >= 1)) {
+    calibration <- rasch.model.params2(df.data.random.group.id,"Calibration")
+    A <- rasch.model.params2(df.data.random.group.id,"A")
+    B <- rasch.model.params2(df.data.random.group.id,"B")
+    C <- rasch.model.params2(df.data.random.group.id,"C")
+    
+    cor.A <- cor.test(calibration, A)
+    cor.B <- cor.test(calibration, B)
+    cor.C <- cor.test(calibration, C)
+  
+  list.corA <- c(list.corA, as.numeric(cor.A$estimate))
+  list.corB <- c(list.corB, as.numeric(cor.B$estimate))
+  list.corC <- c(list.corC, as.numeric(cor.C$estimate))
+  
+  list.corA.lower <- c(list.corA.lower, as.numeric(cor.A$conf.int[1]))
+  list.corA.higher <- c(list.corA.higher, as.numeric(cor.A$conf.int[2]))
+  
+  list.corB.lower <- c(list.corB.lower, as.numeric(cor.B$conf.int[1]))
+  list.corB.higher <- c(list.corB.higher, as.numeric(cor.B$conf.int[2]))
+  
+  list.corC.lower <- c(list.corC.lower, as.numeric(cor.C$conf.int[1]))
+  list.corC.higher <- c(list.corC.higher, as.numeric(cor.C$conf.int[2]))
+  
+  }
+}
+```
+
+```{r}
+mean(list.corA)
+mean(list.corA.higher)
+mean(list.corA.lower)
+```
+```{r}
+mean(list.corB)
+mean(list.corB.higher)
+mean(list.corB.lower)
+```
+```{r}
+mean(list.corC)
+mean(list.corC.higher)
+mean(list.corC.lower)
+```
