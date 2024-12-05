@@ -6,12 +6,14 @@ This repo contains data analysis and figures in the manuscript of ROAR-CAT.
 ## Analysis
 Study 1: parameter_invariance.Rmd\
 Study 2: cat_validation.Rmd\
-Study 3: roar-convergent-validity.Rmd\
+Study 3: roar-convergent-validity.Rmd
 
 ## Code availability
-jsCAT software can be found in https://github.com/yeatmanlab/jsCAT\
-The demo of the operational ROAR-CAT (84 adaptive items): https://roar-word.web.app/?recruitment=demo\
-Code to produce the results and figures can be found in https://github.com/yeatmanlab/ROAR-CAT-Public\
+jsCAT software can be found in https://github.com/yeatmanlab/jsCAT
+
+The demo of the operational ROAR-CAT (84 adaptive items): https://roar-word.web.app/?recruitment=demo
+
+Code to produce the results and figures can be found in https://github.com/yeatmanlab/ROAR-CAT-Public
 
 ## Data (private)
 We cannot legally make the data public due to privacy regulations from the schools. 
