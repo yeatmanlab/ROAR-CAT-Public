@@ -388,7 +388,7 @@ ggplot(df.estimate.new, aes(x = trueEstimate)) +
 
 ```
 
-Sanity Check: difference between using theta range (-4,4) vs (-6, 6)
+## sanity check: difference between using theta range (-4,4) vs (-6, 6)
 ```{r fig.width=8,fig.height=6}
 g.theta.justification.1 <- ggplot(df.estimate.new , mapping = aes(x = trueEstimate,
                      y = trueEstimate.6)) +  
@@ -909,8 +909,8 @@ g.bias <- ggplot(df.aggregrate.learning.curve , mapping = aes(x = trialNumTotal,
         axis.title=element_text(size=20), legend.position = "bottom")) 
 
 
-ggsave("../plots/roar_cat_study2_SI_3.png", width=15, height=15)
-ggsave("../plots/roar_cat_study2_SI_3.pdf", width=15, height=15)
+ggsave("../plots/roar_cat_study2_SI_2.png", width=15, height=15)
+ggsave("../plots/roar_cat_study2_SI_2.pdf", width=15, height=15)
 ```
 
 ### empirical only
