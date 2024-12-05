@@ -25,6 +25,7 @@ library(Metrics)
 library(corrplot)
 library(rstudioapi)
 library(patchwork)
+library(viridis)
 ```
 
 # Settings
@@ -40,6 +41,8 @@ options(dplyr.summarise.inform = F)
 # mirt Model
 ```{r}
 mirt0.2 <- load("../models/mirt_model_0.2.rda")
+
+mirt0.3 <- load("../models/mirt_model_0.3.rda")
 
 mirt0.2.order <- load("../models/resp_order_theta_brs_model_0.2.rda")
 ```
@@ -84,14 +87,15 @@ additional filter
 We keep particiapnts who doesn't have any block has median response time lower than 2 standard deviation
 ```{r}
 df.included.names <- df.student.v2 %>% 
-  group_by(pid, variant) %>% 
+  group_by(pid, runId,  variant) %>% 
   tally() %>% 
   filter(n == 246) 
-
-df.student.final <- df.student.v2 %>% 
-  filter(pid %in% df.included.names$pid)
 ```
 
+```{r}
+df.student.final <- df.student.v2 %>% 
+  filter(runId %in% df.included.names$runId)
+```
 
 ```{r}
 df.excluded.participants <- df.student %>% 
@@ -119,7 +123,7 @@ ggplot(df.excluded.participants, mapping = aes(x = block,
 ```{r}
 df.student.summary <- df.student.final %>% 
   filter(trialNumTotal == 246) %>% 
-  select(pid, variant, ageMonths, trueEstimate = thetaEstimate) %>% 
+  dplyr ::select(pid, variant, ageMonths, trueEstimate = thetaEstimate) %>% 
   left_join(df.student.final %>% 
   group_by(variant, pid) %>% 
   summarise(median_rt = median(log(rt))))
@@ -150,13 +154,13 @@ t_test_result_rt
 ```{r}
 df.student.summary.long <- df.student.summary %>% 
   mutate(variant = ifelse(variant == "adaptive", "ROAR-CAT", "ROAR-Random")) %>% 
-  select(-ageMonths) %>% 
+  dplyr :: select(-ageMonths) %>% 
   dplyr :: rename(`theta estimate` = trueEstimate, `median response time in log scale (ms)` = median_rt) %>% 
   pivot_longer(cols = c(`theta estimate`, `median response time in log scale (ms)`), names_to = "metrics")
 
 ```
 
-```{r fig.width=4,fig.height=2}
+```{r fig.width=10,fig.height=5}
 ggplot(df.student.summary.long, aes(value, linetype = variant)) + 
   geom_density(size=1) + 
   facet_wrap(~metrics, scales = "free", switch = "x") +
@@ -176,17 +180,31 @@ ggsave("../plots/roar_cat_study2_figure1.pdf")
 
 ## Visualize three participants with different levels
 ```{r}
-df.student.final %>% 
+fisherInfo <- function(th, a, b, c){
+  p = c + (1-c) * exp(a*(th - b))/(1+ exp(a*(th - b)))
+  q = 1- p 
+  return  ((a^2) * (q/p) * ((p-c)^2) / ((1-c)^2))
+  
+}
+```
+```{r}
+df.student.selected.trueTheta <- df.student.final %>% 
   filter(trialNumTotal == 246, variant == "adaptive") %>% 
   filter(pid %in% c('v-C9uf0s-837', "v-feUpZD-904", "v-woMyqy-876")) %>%
-  select(pid, thetaEstimate, thetaSE)
+  select(pid, thetaEstimate) %>% 
+  mutate(trueTheta = thetaEstimate) %>% 
+  select(pid, trueTheta)
+  
 ```
-```{r echo = FALSE}
+```{r}
 df.student_longer <- df.student.final %>% 
   filter(pid %in%  c('v-C9uf0s-837', "v-feUpZD-904", "v-woMyqy-876")) %>% 
   dplyr::rename(`item difficulty` = difficulty, `theta estimate` = thetaEstimate) %>% 
   pivot_longer(cols = c(`item difficulty` , `theta estimate`)) %>% 
   mutate(correct = as.character(correct))
+```
+
+```{r echo = FALSE}
 
 ggplot(df.student_longer %>% dplyr :: rename(`item type` = realpseudo), mapping = aes(x = trialNumTotal,
                      y = value, 
@@ -201,29 +219,111 @@ ggplot(df.student_longer %>% dplyr :: rename(`item type` = realpseudo), mapping 
   scale_color_manual(values=c("#8F993E", "#E05A1D")) +
   geom_point(size = 1) 
 
-ggsave("../plots/roar_cat_study2_figure3.png")
-ggsave("../plots/roar_cat_study2_figure3.pdf")
+ggsave("../plots/roar_cat_study2_SI_1.png")
+ggsave("../plots/roar_cat_study2_SI_1.pdf")
 ```
 
-# Corpus
+## Sanity check: checking item information for the first 10 items between variants
+```{r}
+df.student.selected.trueTheta <- df.student.final %>% 
+  filter(trialNumTotal == 246) %>% 
+  #filter(pid %in% c('v-C9uf0s-837', "v-feUpZD-904", "v-woMyqy-876")) %>%
+  dplyr :: select(pid, thetaEstimate) %>% 
+  mutate(trueTheta = thetaEstimate) %>% 
+  dplyr ::select(pid, trueTheta)
+
+df.student.information.top10.items <- df.student.final %>% 
+  dplyr::rename(`item difficulty` = difficulty, `theta estimate` = thetaEstimate) %>% 
+  left_join(df.student.selected.trueTheta) %>% 
+  mutate(itemInformation = fisherInfo(`theta estimate`, 1, `item difficulty`, 0.5)) %>% 
+  arrange(pid, trialNumTotal) %>%
+  filter(trialNumTotal <= 10) %>% 
+  group_by(variant, trialNumTotal) %>%
+  dplyr :: summarise(sd_itemInformation = sd(itemInformation),mean_itemInformation = mean(itemInformation),count = n()) %>% 
+  mutate(variant = ifelse(variant == "adaptive", "ROAR-CAT", "ROAR-Random"))
+
+ggplot(df.student.information.top10.items, aes(x = trialNumTotal, y = mean_itemInformation, color = variant)) +
+  geom_point(position = position_dodge(width = 0.2), size = 2) +
+  geom_errorbar(aes(ymin = mean_itemInformation - sd_itemInformation, ymax = mean_itemInformation + sd_itemInformation),
+                width = 0.2, position = position_dodge(width = 0.2)) +
+   scale_x_continuous(breaks = seq(1, 10, by = 1), labels = seq(1, 10, by = 1)) +
+  labs(title = "Item information of the selected item (mean and standard deviation)",
+       x = "Number of test items",
+       y = "Item information of the selected item",
+       color = "Variant") 
+```
+
+# Item Bank for Cat Simulation
 ```{r}
 df.word_params_new <- read_csv("../corpus/item_bank_v3.csv")
 ```
-## create item bank for cat simulation
+```{r}
+plot.test.information <- function (items) {
+  # Define the probability function for the 4PL model
+prob_1pl <- function(theta, a, b, c, d) {
+  c + (1 - c) / (1 + exp(-1 * (theta - b)))
+}
+
+# Define the information function for a single item
+information_1pl <- function(theta, a, b, c, d) {
+  p <- prob_1pl(theta, a, b, c, d)
+  q <- 1-p
+  return(q * ((p-0.5)/0.5)^2 / p)
+  
+}
+
+# Generate a sequence of theta values
+theta_values <- seq(-4, 4, length.out = 100)
+
+# Calculate the Test Information Function
+test_information <- theta_values %>%
+  map_dbl(function(theta) {
+    items %>%
+      mutate(info = information_1pl(theta, a, b, c, d)) %>%
+      summarize(total_info = sum(info)) %>%
+      pull(total_info)
+  })
+
+# Create a data frame for plotting
+plot_data <- tibble(
+  theta = theta_values,
+  information = test_information
+)
+
+# Plot the Test Information Function
+ggplot(plot_data, aes(x = theta, y = information)) +
+  geom_line(color = "black", size = 1) +
+  ylim(0, 20) + 
+  labs(
+    title = "Test information based on 246 items",
+    x = "Theta ability",
+    y = "Test information"
+  )
+}
+```
+
 ```{r}
 item.bank.real <- data.frame(df.word_params_new %>% 
   dplyr :: select(-c(word, ...1, corpusId)))
+
+plot.test.information(df.word_params_new)
 ```
 
 ```{r}
 ggplot(df.word_params_new %>% 
          dplyr :: rename(`Item type` = realpseudo), aes(x=b,  fill = `Item type`, color = `Item type`)) + geom_histogram(position = "identity", alpha = 0.7, bins = 20) + xlim(-4, 4) + 
   labs(x = "Item difficulty parameter",
-       y = "Count") 
+       y = "Count") + 
+  theme(legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15),
+        strip.text = element_text(size = 15),
+        title = element_text(size = 15),
+        axis.text=element_text(size= 15),
+        axis.title=element_text(size=15))
   
 
-ggsave("../plots/roar_cat_study1_figure5.png")
-ggsave("../plots/roar_cat_study1_figure5.pdf")
+ggsave("../plots/roar_cat_study1_figure5.png", width = 6, height = 5)
+ggsave("../plots/roar_cat_study1_figure5.pdf", width = 6, height = 5)
 ```
 
 # Get true mirt theta 
@@ -233,15 +333,15 @@ colnames.order <- c(df.word_params_new$word)
 
 ```{r}
 df.resp.identifier <- df.student.final %>% 
-  select(pid, word, correct) %>% 
+  dplyr :: select(pid, word, correct) %>% 
   pivot_wider(names_from = word, values_from = correct) %>% 
-  select(pid)
+  dplyr :: select(pid)
 
 df.resp <- df.student.final %>% 
-  select(pid, word, correct) %>% 
+  dplyr :: select(pid, word, correct) %>% 
   pivot_wider(names_from = word, values_from = correct) %>% 
-  select(-pid) %>% 
-  select(colnames(get(mirt0.2.order)))
+  dplyr :: select(-pid) %>% 
+  dplyr :: select(colnames(get(mirt0.2.order)))
 ```
 
 ```{r}
@@ -259,7 +359,72 @@ df.estimate <- df.matrix %>%
   mutate(pid = df.resp.identifier$pid) %>% 
   mutate(trueEstimate = round(trueEstimate, digits = 6))
 ```
+```{r}
+scores.theta.6 <- fscores(get(mirt0.3),  
+                    method = "ML", 
+                    full.scores.SE = T,
+                    theta_lim = c(-6, 6),
+                    min_theta= -6, 
+                    max_theta = 6,
+                    response.pattern = df.resp)
+df.matrix.theta.6 <- as_tibble(scores.theta.6)
 
+df.estimate.new <- df.estimate %>% 
+  mutate(trueEstimate.6 = df.matrix.theta.6$F1, trueSE.6 = df.matrix.theta.6$SE_F1) 
+```
+
+
+```{r}
+ggplot(df.estimate.new, aes(x = trueEstimate)) +
+  geom_histogram(binwidth = 0.5, fill = "grey", color = "black") +
+  labs(title = "Distribution of theta estimate with limit (-4, 4)",
+       x = "Theta estimate",
+       y = "Count") + 
+  theme(legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15),
+        title = element_text(size = 15),
+        axis.text=element_text(size= 15),
+        axis.title=element_text(size=15))
+
+```
+
+Sanity Check: difference between using theta range (-4,4) vs (-6, 6)
+```{r fig.width=8,fig.height=6}
+g.theta.justification.1 <- ggplot(df.estimate.new , mapping = aes(x = trueEstimate,
+                     y = trueEstimate.6)) +  
+  geom_abline(color = 'gray', linetype = "dashed") +
+  geom_point(size = 1) + 
+  labs(x = "Theta estimate with limit (-4, 4)",
+       y = "Theta estimate with limit (-6, 6)") + 
+  xlim(-6, 6) + 
+  ylim(-6, 6) + 
+  coord_equal() + 
+  theme(legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15),
+        title = element_text(size = 15),
+        axis.text=element_text(size= 15),
+        axis.title=element_text(size=15))
+
+g.theta.justification.2 <- ggplot(df.estimate.new, mapping = aes(x = trueSE,y = trueSE.6, color = trueEstimate.6)) +  
+  geom_abline(color = 'gray', linetype = "dashed") + 
+  geom_point(size = 1) +
+  labs(x = "SEM with theta limit (-4, 4)",
+       y = "SEM with theta limit (-6, 6)")  + scale_color_viridis(option = 'plasma') + 
+  labs(color = "Theta estimate with limit (-6, 6)") + theme(legend.position = "bottom") + xlim(0, 1) +
+  theme(legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15),
+        title = element_text(size = 15),
+        axis.text=element_text(size= 15),
+        axis.title=element_text(size=15))
+
+g.theta.justification <- g.theta.justification.1 + g.theta.justification.2 + plot_layout(ncol = 2)
+
+ggsave("../plots/roar_cat_study2_SI_3.pdf", width = 10, height = 5)
+ggsave("../plots/roar_cat_study2_SI_3.png", width = 10, height = 5)
+  
+```
+
+# Obtain empirical response patterns with true theta esimate 
 ```{r}
 colnames.order <- c("pid", df.word_params_new$word)
 
@@ -268,34 +433,47 @@ df.student.with.trueEstimate <- df.student.final %>%
 
 df.validation.resp.adaptive <- df.student.with.trueEstimate %>% 
   filter(variant == "adaptive") %>% 
-  select(pid, word, correct) %>% 
+  dplyr :: select(pid, word, correct) %>% 
   pivot_wider(names_from = word, values_from = correct) %>% 
-  select(colnames.order)
+  dplyr ::select(colnames.order)
 
 df.validation.resp.random <- df.student.with.trueEstimate %>% 
   filter(variant == "random") %>% 
-  select(pid, word, correct) %>% 
+  dplyr ::select(pid, word, correct) %>% 
   pivot_wider(names_from = word, values_from = correct) %>% 
-  select(colnames.order)
+  dplyr ::select(colnames.order)
+
+df.validation.resp <- rbind(df.validation.resp.adaptive, df.validation.resp.random)
 ```
 
 ```{r}
-df.validation.resp <- rbind(df.validation.resp.adaptive, df.validation.resp.random)
+#write.csv(df.validation.resp, "../data/roar_cat_validation_resp.csv")
+```
+
+```{r}
+# df.validation.resp.renamed <- df.validation.resp %>%
+#   arrange(pid) %>% 
+#   mutate(pid_new = 1 : 478) %>%
+#   select(-pid) %>%
+#   relocate(pid_new)
+# 
+# write.csv(df.validation.resp.renamed, "../data/roar_cat_validation_renamed.csv")
 ```
 
 # Theoretical Approach
 ## Prepare response patterns
 ```{r}
-df.theta.sample <- df.student.final %>% 
-  filter(trialNumTotal == 246) %>% 
-  select(pid, thetaEstimate)
-```
-
-```{r}
 ##we'll start small just so that you can see everything, but you'll want to make this bigger downstream.
 ni<-246
 np<-472
 calibration.n <- 1500
+
+df.theta.sample <- df.student.final %>% 
+  filter(trialNumTotal == ni) %>% 
+  dplyr :: select(pid, thetaEstimate)
+```
+
+```{r}
 ##now we're going to simulate data according to this model and examine some key properties
 set.seed(1)
 ##first let's describe the individual level part of the model
@@ -314,7 +492,9 @@ inv_logit<-function(x) {
 
 ```{r}
 func.create.response <- function(b, th, np, ni) {
-  th.mat<-matrix(th,np,ni,byrow=FALSE) 
+  th.mat<-matrix(th,np,ni,byrow=FALSE) #these are the true abilities. we don't observe them,    which will be a real problem for us downstream. but we'll not worry about that today.
+#th.mat #abilities, on per row
+##now the item level part.
   b.mat <- matrix(rep(b, np), nrow = np, byrow = TRUE)
 
   pr<-inv_logit(th.mat-b.mat)
@@ -340,8 +520,8 @@ monte.carlo.resp <- resp.sample %>%
 ```
 
 ```{r}
-monte.carlo.resp.ordered <- setNames(monte.carlo.resp %>% select(-pid), df.word_params_new$word) %>% 
-  select(colnames(get(mirt0.2.order)))
+monte.carlo.resp.ordered <- setNames(monte.carlo.resp %>% dplyr :: select(-pid), df.word_params_new$word) %>% 
+  dplyr :: select(colnames(get(mirt0.2.order)))
   
 ```
 
@@ -361,7 +541,7 @@ monte.carlo.trueEstimate <- as_tibble(th.sample.computed) %>%
 
 ```
 
-# Simulate CAT
+# CAT Simulation Functions
 simulate participants
 ```{r}
 set.seed(7)
@@ -409,7 +589,6 @@ func.catSim <- function(resp, item.bank, method){
 ```
 
 # Post-hoc Simulation in catR
-
 ```{r}
 set.seed(1)
 monte.carlo.cat.simulation <- function(df.theta.sample, item.bank, iteration){
@@ -454,44 +633,40 @@ df.monte.carlo.results.v2 <- monte.carlo.cat.simulation(df.theta.sample, item.ba
 ```
 
 ```{r}
-write.csv(df.monte.carlo.results.v2, "../data/catR_monte_carlo_simulation_v2.csv")
+#write.csv(df.monte.carlo.results.v2, "../data/catR_monte_carlo_simulation_v2.csv")
+```
+```{r}
+df.monte.carlo.results.v2 <- read.csv("../data/catR_monte_carlo_simulation_v2.csv")
 ```
 
 ## simulation data 
 ```{r}
 df.monte.carlo.simulation.compare <- df.monte.carlo.results.v2  %>%
-   mutate(thetaEstimate = round(thetaEstimate, digits = 6)) %>%
+   mutate(thetaEstimate = round(thetaEstimate, digits = 4)) %>%
   filter(trialNumTotal == 246) %>%
-  select(pid, thetaEstimate) %>%
+  dplyr :: select(pid, thetaEstimate) %>%
   dplyr :: rename(trueEstimate = thetaEstimate) %>%
+  unique() %>% 
   left_join(df.monte.carlo.results.v2 %>%
-  mutate(thetaEstimate = round(thetaEstimate, digits = 6)))
-
-```
-
-
-```{r}
-
-df.jsCAT.simulation <- read_csv( "../data/simulation_jscat/jsCAT_simulation_v3_more.csv") %>% 
-  rbind(read_csv( "../data/simulation_jscat/jsCAT_simulation_v3.csv") %>% mutate(iteration = iteration + 5)) %>% 
-  mutate(thetaEstimate = round(thetaEstimate, digits = 6))
+  mutate(thetaEstimate = round(thetaEstimate, digits = 4)) %>% 
+    unique())
 ```
 
 ```{r}
 df.trueEstimate <- df.student.final %>%
-   mutate(thetaEstimate = round(thetaEstimate, digits = 6)) %>% 
+   mutate(thetaEstimate = round(thetaEstimate, digits = 4)) %>% 
   filter(trialNumTotal == 246) %>% 
-  select(pid, thetaEstimate) %>% 
+  dplyr :: select(pid, thetaEstimate) %>% 
   dplyr :: rename(trueEstimate = thetaEstimate)
 
 df.compare.school <- df.student.final %>%
-  mutate(thetaEstimate = round(thetaEstimate, digits = 6)) %>% 
+  mutate(thetaEstimate = round(thetaEstimate, digits = 4)) %>% 
   left_join(df.trueEstimate, by = "pid")
 
 df.compare.all <- df.compare.school %>% add_column(type = "empirical", iteration = 1) %>% 
-  select(pid, variant, trialNumTotal, type, thetaEstimate, iteration, thetaSE, trueEstimate) %>% 
+  dplyr ::select(pid, variant, trialNumTotal, type, thetaEstimate, iteration, thetaSE, trueEstimate) %>% 
   rbind(df.monte.carlo.simulation.compare %>% add_column(type = "simulation") %>% 
-  select(pid, variant, trialNumTotal, type, thetaEstimate, iteration, thetaSE, trueEstimate)) %>% unique() %>% 
+  dplyr ::select(pid, variant, trialNumTotal, type, thetaEstimate, iteration, thetaSE, trueEstimate)) %>% unique() %>% 
   mutate(variant = ifelse(variant == "adaptive", "ROAR-CAT", "ROAR-Random"))
 ```
 
@@ -508,14 +683,6 @@ func.visualize.differences.validate.bin <- function(df.compare, quintiles){
   df.simulation.true.data.2 <- df.compare %>%
     mutate(theta.bin = cut(trueEstimate, breaks = quintiles, include.lowest = TRUE, labels = c("Q1", "Q2", "Q3", "Q4", "Q5"))) %>% 
     filter(!is.na(theta.bin))
-  
-  # quartiles <- quantile(df.compare$trueEstimate, probs = c(0, 0.33, 0.67, 1))
-  # 
-  # df.simulation.true.data.2 <- df.compare %>%
-  #   mutate(theta.bin = cut(trueEstimate, breaks = quartiles, include.lowest = TRUE, labels = c("Q1", "Q2", "Q3")))
-  
-  # df.simulation.true.data.2 <- df.compare %>%
-  #   mutate(theta.bin = round(trueEstimate, digit = 0))
   
   df.plot_curve <- df.simulation.true.data.2 %>%
     group_by(variant, type, trialNumTotal, theta.bin) %>%
@@ -544,17 +711,117 @@ func.visualize.differences.validate.all <- function(df.compare, list.trueEstimat
 
 ```{r}
 quintiles <- quantile(df.compare.school$trueEstimate, probs = c(0, 0.20, 0.40, 0.60, 0.80, 1))
-df.aggregrate.learning.curve <- func.visualize.differences.validate.bin(df.compare.all, quintiles) %>% 
-  mutate(bias = abs(bias))
-df.aggregrate.learning.curve.all <- func.visualize.differences.validate.all(df.compare.all, df.estimate$trueEstimate) %>% 
-  mutate(bias = abs(bias))
+df.aggregrate.learning.curve <- func.visualize.differences.validate.bin(df.compare.all, quintiles) 
+df.aggregrate.learning.curve.all <- func.visualize.differences.validate.all(df.compare.all, df.estimate$trueEstimate)
+```
+
+## sanity check of SEM
+```{r}
+df.check.first.10.trials <- df.compare.all %>% 
+  filter(trialNumTotal <= 10, type == "empirical")
+
+summary_df <- df.check.first.10.trials %>%
+  group_by(trialNumTotal, variant) %>%
+  dplyr :: summarise(
+    mean_thetaSE = mean(thetaSE),
+    sd_thetaSE = sd(thetaSE) 
+  )
+
+ggplot(summary_df, aes(x = trialNumTotal, y = mean_thetaSE, color = variant)) +
+  geom_point(position = position_dodge(width = 0.2), size = 2) +
+  geom_errorbar(aes(ymin = mean_thetaSE - sd_thetaSE, ymax = mean_thetaSE + sd_thetaSE),
+                width = 0.2, position = position_dodge(width = 0.2)) +
+   scale_x_continuous(breaks = seq(1, 10, by = 1), labels = seq(1, 10, by = 1)) +
+  labs(title = "Standard error of measurement of theta estimate (mean and standard deviation)",
+       x = "Number of test items",
+       y = "Standard error of measurement of theta estimate",
+       color = "Variant") 
 ```
 
 
+# Results
+## reliability
 
-# Visualizations
+```{r fig.width=6,fig.height=6}
+df.aggregrate.learning.curve.all$type <- factor(df.aggregrate.learning.curve.all$type, levels = c("simulation", "empirical"))
+g.reliability.all <- ggplot(df.aggregrate.learning.curve.all %>% filter(type == "empirical"), mapping = aes(x = trialNumTotal, y = reliability)) +
+  geom_smooth(aes(linetype = variant), color = "black", size = 2, se = FALSE) +
+  labs(x = "Number of test items", 
+       y = "Reliability",
+       title = "Empirical Test Reliability") +
+  ylim(0,1) +
+  xlim(1, 246) + 
+  scale_y_continuous(breaks = round(seq(0, 1, by = 0.1),1)) +
+  scale_color_manual(values=c("#8F993E", "#E05A1D")) + 
+  theme(title = element_text(
+        size = 20, color = "black"), 
+        legend.text = element_text(size = 18), 
+        legend.title = element_text(size = 18, face = "bold"),
+        axis.text=element_text(size=18),
+        plot.margin = margin(1,1,1,1, "cm"),
+        #panel.spacing = unit(1, "lines"), 
+       # panel.grid = element_line(size = 2), 
+        legend.key.size = unit(2, "lines"),
+        axis.title=element_text(size=20), legend.position = "none")
 
-## MSE and Bias
+```
+
+## MSE
+```{r fig.width=6,fig.height=6}
+
+g.mse.all <- ggplot(df.aggregrate.learning.curve.all %>% filter(type == "empirical"), mapping = aes(x = trialNumTotal,
+                     y = mse)) +
+  geom_smooth(aes(linetype = variant), color = "black", size = 2, se = FALSE) +
+  labs(x = "Number of test items",
+       y = "Mean squared error",
+       title = "Mean Squared Error") + 
+  ylim(0, 1) +
+  xlim(1, 246) + 
+  scale_color_manual(values=c("#8F993E", "#E05A1D")) + 
+  theme(title = element_text(
+        size = 20, color = "black"), 
+        legend.text = element_text(size = 18), 
+        legend.title = element_text(size = 18, face = "bold"),
+        axis.text=element_text(size=18),
+        plot.margin = margin(1,1,1,1, "cm"),
+        #panel.spacing = unit(1, "lines"), 
+       # panel.grid = element_line(size = 2), 
+        legend.key.size = unit(2, "lines"),
+        axis.title=element_text(size=20), legend.position = "none")
+``` 
+
+## bias
+```{r fig.width=6,fig.height=6}
+
+g.bias.all <- ggplot(df.aggregrate.learning.curve.all %>% filter(type == "empirical"), mapping = aes(x = trialNumTotal,
+                     y = bias)) +
+  geom_smooth(aes(linetype = variant), color = "black", size = 2, se = FALSE) +
+  labs(x = "Number of test items",
+       y = "Bias",
+       title = "Bias") +
+  xlim(1, 246) + 
+  scale_color_manual(values=c("#8F993E", "#E05A1D")) + 
+  theme(title = element_text(
+        size = 20, color = "black"), 
+        legend.text = element_text(size = 18), 
+        legend.title = element_blank(),
+        axis.text=element_text(size=18),
+        plot.margin = margin(1,1,1,1, "cm"),
+        #panel.spacing = unit(1, "lines"), 
+       # panel.grid = element_line(size = 2), 
+        legend.key.size = unit(2, "lines"),
+        axis.title=element_text(size=20), legend.position = "bottom")
+```
+
+```{r }
+g.reliability.all + g.bias.all + g.mse.all
+
+ggsave("../plots/roar_cat_study2_figure2.png", width=15,height=6)
+ggsave("../plots/roar_cat_study2_figure2.pdf", width=15,height=6)
+```
+
+
+## analysis based on 5 bins
 
 ```{r}
 # df.aggregrate.learning.curve$theta.bin <- factor(df.aggregrate.learning.curve$theta.bin, levels = c("low theta", "medium theta", "high theta"))
@@ -593,16 +860,17 @@ g.bias <- ggplot(df.aggregrate.learning.curve , mapping = aes(x = trialNumTotal,
                      linetype = variant)) +
   geom_smooth(size = 2, se = FALSE) +
   labs(x = "Number of test items",
-       y = "Absolute bias",
-       title = "Absolute Bias") +
+       y = "Bias",
+       title = "Bias") +
    xlim(1, 150) +
-  ylim(0, 1) +
+  ylim(-0.75, 0.75) +
   facet_grid(cols = vars(theta.bin)) +
   scale_color_manual(values=c("#8F993E", "#E05A1D")) +
   theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5))
 ```
 
-```{r fig.width=8,fig.height=6}
+### empirical vs. catR simulation 
+```{r}
 (g.sem + theme(strip.text =element_text(
         size = 20, color = "black"),
         title = element_text(
@@ -612,39 +880,42 @@ g.bias <- ggplot(df.aggregrate.learning.curve , mapping = aes(x = trialNumTotal,
         axis.text=element_text(size=20),
         plot.margin = margin(1,1,1,1, "cm"),
         panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
+        #panel.grid = element_line(size = 2), 
         axis.title=element_text(size=20), legend.position = "none")) /
-(g.mse + 
+  (g.bias + theme(title = element_text(
+        size = 20, color = "black"), 
+        strip.text = element_text(
+        size = 20, color = "black"),
+        legend.text = element_text(size = 18),
+        legend.title = element_text(size = 18, face = "bold"),
+        axis.text=element_text(size=20),
+        plot.margin = margin(1,1,1,1, "cm"),
+        panel.spacing = unit(1, "lines"), 
+        #panel.grid = element_line(size = 2), 
+        axis.title=element_text(size=20), legend.position = "none")) /
+( g.mse +
   theme(strip.text = element_text(
         size = 20, color = "black"),
         title = element_text(
         size = 20, color = "black"), 
         legend.text = element_text(size = 18), 
-        legend.title = element_text(size = 18, face = "bold"),
+        #legend.title = element_text(size = 18, face = "bold"),
         axis.text=element_text(size=20),
         plot.margin = margin(1,1,1,1, "cm"),
         panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
-        axis.title=element_text(size=20), legend.position = "none")) / (g.bias + theme(title = element_text(
-        size = 20, color = "black"), 
-        strip.text = element_text(
-        size = 20, color = "black"),
-        legend.text = element_text(size = 18),
-        legend.title = element_blank(),
         legend.key.size = unit(4, "lines"),
-        axis.text=element_text(size=20),
-        plot.margin = margin(1,1,1,1, "cm"),
-        panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
-        axis.title=element_text(size=20), legend.position = "bottom"))
+        #panel.grid = element_line(size = 2),
+        legend.title = element_text(size = 18, face = "bold"),
+        axis.title=element_text(size=20), legend.position = "bottom")) 
 
 
-ggsave("../plots/roar_cat_study2_SI.png")
-ggsave("../plots/roar_cat_study2_SI.pdf")
+ggsave("../plots/roar_cat_study2_SI_3.png", width=15, height=15)
+ggsave("../plots/roar_cat_study2_SI_3.pdf", width=15, height=15)
 ```
 
+### empirical only
 
-```{r fig.width=8,fig.height=6}
+```{r}
 df.aggregrate.learning.curve.empirical <- df.aggregrate.learning.curve %>% 
   filter(type == "empirical")
 
@@ -677,10 +948,10 @@ g.bias <- ggplot(df.aggregrate.learning.curve.empirical , mapping = aes(x = tria
                      linetype = variant)) +
   geom_smooth(size = 2, se = FALSE, color = "#E05A1D") +
   labs(x = "Number of test items",
-       y = "Absolute bias",
-       title = "Absoluate Bias") +
+       y = "Bias",
+       title = "Bias") +
    xlim(1, 150) +
-  ylim(0, 1) +
+  ylim(-0.75, 0.75) +
   facet_grid(cols = vars(theta.bin)) +
   theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5))
 
@@ -693,9 +964,9 @@ g.bias <- ggplot(df.aggregrate.learning.curve.empirical , mapping = aes(x = tria
         axis.text=element_text(size=20),
         plot.margin = margin(1,1,1,1, "cm"),
         panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
+        #panel.grid = element_line(size = 2), 
         axis.title=element_text(size=20), legend.position = "none")) /
-(g.mse + 
+(g.bias + 
   theme(strip.text = element_text(
         size = 20, color = "black"),
         title = element_text(
@@ -705,8 +976,8 @@ g.bias <- ggplot(df.aggregrate.learning.curve.empirical , mapping = aes(x = tria
         axis.text=element_text(size=20),
         plot.margin = margin(1,1,1,1, "cm"),
         panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
-        axis.title=element_text(size=20), legend.position = "none")) / (g.bias + theme(title = element_text(
+        #panel.grid = element_line(size = 2), 
+        axis.title=element_text(size=20), legend.position = "none")) / (g.mse + theme(title = element_text(
         size = 20, color = "black"), 
         strip.text = element_text(
         size = 20, color = "black"),
@@ -715,16 +986,17 @@ g.bias <- ggplot(df.aggregrate.learning.curve.empirical , mapping = aes(x = tria
         axis.text=element_text(size=20),
         plot.margin = margin(1,1,1,1, "cm"),
         panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
-        legend.title = element_blank(),
+        #panel.grid = element_line(size = 2), 
+        legend.title = element_text(size = 18, face = "bold"),
         axis.title=element_text(size=20), legend.position = "bottom"))
 
-ggsave("../plots/roar_cat_study2_figure4.png")
-ggsave("../plots/roar_cat_study2_figure4.pdf")
+ggsave("../plots/roar_cat_study2_figure3.png", width=15, height=15)
+ggsave("../plots/roar_cat_study2_figure3.pdf", width=15, height=15)
 ```
 
 
 # Exploratory Analysis
+
 ```{r}
 quartiles <- quantile(df.compare.all$trueEstimate, probs = c(0, 0.20, 0.40, 0.60, 0.80, 1))
 
@@ -732,166 +1004,39 @@ df.wrong.estimate <- df.compare.all %>%
     mutate(theta.bin = cut(trueEstimate, breaks = quartiles, include.lowest = TRUE, labels = c("Q1", "Q2", "Q3", "Q4", "Q5"))) %>% 
   filter(trialNumTotal %in% c(80)) %>% 
   group_by(pid, type, trialNumTotal, theta.bin) %>% 
-  summarise(thetaSE = mean(thetaSE),thetaEstimate = mean(thetaEstimate), trueEstimate = mean(trueEstimate)) %>% 
+  dplyr ::summarise(thetaSE = mean(thetaSE),thetaEstimate = mean(thetaEstimate), trueEstimate = mean(trueEstimate)) %>% 
   mutate(diff = abs(trueEstimate - thetaEstimate)) %>% 
-  select(-c(trueEstimate, thetaEstimate, thetaSE)) %>% 
+  dplyr :: select(-c(trueEstimate, thetaEstimate, thetaSE)) %>% 
   pivot_wider(names_from = type, values_from = diff) %>% 
   filter(abs(simulation-empirical) > 1)
 ```
-
 
 ```{r}
 df.compare.school %>% 
   filter(trueEstimate < -1.02, trueEstimate > -2.3) %>% 
   filter(variant == "random") %>% 
   group_by(block) %>% 
-  summarise(mean(correct), sd(correct))
+  dplyr :: summarise(mean(correct), sd(correct))
 
 df.compare.school %>% 
   filter(trueEstimate < -0.26, trueEstimate > -1.02) %>% 
   filter(variant == "random") %>% 
   group_by(block) %>% 
-  summarise(mean(correct), sd(correct))
+  dplyr :: summarise(mean(correct), sd(correct))
 ```
 
 ```{r}
 quartiles <- quantile(df.compare.school$trueEstimate, probs = c(0, 0.20, 0.40, 0.60, 0.80, 1))
 
 df.wrong.estimate <-df.student.final %>% 
-  mutate(thetaEstimate = round(thetaEstimate, digits = 6)) %>% 
+  mutate(thetaEstimate = round(thetaEstimate, digits = 4)) %>% 
   left_join(df.trueEstimate, by = "pid") %>% 
   mutate(theta.bin = cut(trueEstimate, breaks = quartiles, include.lowest = TRUE, labels = c("Q1", "Q2", "Q3", "Q4", "Q5"))) %>% 
   #filter(theta.bin %in% c("Q2", "Q3")) %>% 
-  select(pid, variant, rt, word, realpseudo, difficulty, theta.bin, correct, block, trialNumTotal, thetaEstimate, thetaSE, trueEstimate) %>% 
+  dplyr ::select(pid, variant, rt, word, realpseudo, difficulty, theta.bin, correct, block, trialNumTotal, thetaEstimate, thetaSE, trueEstimate) %>% 
   mutate(response = ifelse(((realpseudo == "real") & (correct == 1)) | ((realpseudo == "pseudo") & (correct == 0)), "right", "left")) %>% 
   filter(theta.bin == "Q2") %>% 
   filter(trialNumTotal == 60) %>% 
   filter(abs(thetaEstimate - trueEstimate) > 1.5)
-
-df.student.final %>% 
-  filter(pid %in% df.wrong.estimate$pid) %>% 
-  filter(rt < 300) %>% 
-  group_by(pid, variant, block) %>% 
-  summarise(pc = mean(correct), rt = mean(rt), n = n())
-
-length(df.wrong.estimate$pid)
-Metrics::mse(df.wrong.estimate$thetaEstimate, df.wrong.estimate$trueEstimate)
 ```
-
-## Reliability
-```{r fig.width=6,fig.height=6}
-df.aggregrate.learning.curve.all$type <- factor(df.aggregrate.learning.curve.all$type, levels = c("simulation", "empirical"))
-g.reliability.all <- ggplot(df.aggregrate.learning.curve.all %>% filter(type == "empirical"), mapping = aes(x = trialNumTotal,
-                     y = reliability)) +
-  geom_smooth(aes(linetype = variant), color = "black", se = FALSE, size = 3) +
-  labs(x = "Number of test items", 
-       y = "Reliability",
-       title = "Empirical Test Reliability") +
-  ylim(0,1) +
-  xlim(1, 246) + 
-  scale_y_continuous(breaks = round(seq(0, 1, by = 0.1),1)) +
-  scale_color_manual(values=c("#8F993E", "#E05A1D")) + 
-  theme(title = element_text(
-        size = 36, color = "black"), 
-        legend.text = element_text(size = 32), 
-        legend.title = element_blank(),
-        axis.text=element_text(size=36),
-        plot.margin = margin(1.5,1.5,1.5,1.5, "cm"),
-        panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
-        legend.key.size = unit(4, "lines"),
-        axis.title=element_text(size=36), legend.position = "none")
-```
-
-## MSE
-```{r fig.width=6,fig.height=6}
-
-g.mse.all <- ggplot(df.aggregrate.learning.curve.all %>% filter(type == "empirical"), mapping = aes(x = trialNumTotal,
-                     y = mse)) +
-  geom_smooth(aes(linetype = variant), color = "black", se = FALSE, size = 3) +
-  labs(x = "Number of test items",
-       y = "Mean squared error",
-       title = "Mean Squared Error") + 
-  ylim(0, 1) +
-  xlim(1, 246) + 
-  scale_color_manual(values=c("#8F993E", "#E05A1D")) + 
-  theme(title = element_text(
-        size = 36, color = "black"), 
-        legend.title = element_blank(),
-        legend.text = element_text(size = 32), 
-        axis.text=element_text(size=36),
-        plot.margin = margin(1.5,1.5,1.5,1.5, "cm"),
-        panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
-        legend.key.size = unit(4, "lines"),
-        axis.title=element_text(size=36), legend.position = "bottom")
-``` 
-
-## bias
-```{r fig.width=6,fig.height=6}
-
-g.bias.all <- ggplot(df.aggregrate.learning.curve.all %>% filter(type == "empirical"), mapping = aes(x = trialNumTotal,
-                     y = bias)) +
-  geom_smooth(aes(linetype = variant), color = "black", se = FALSE, size = 3) +
-  labs(x = "Number of test items",
-       y = "Absoluate bias",
-       title = "Absolute Bias") +
-  xlim(1, 246) + 
-  scale_color_manual(values=c("#8F993E", "#E05A1D")) + 
-  theme(title = element_text(
-        size = 36, color = "black"), 
-        legend.text = element_text(size = 32), 
-        legend.title = element_blank(),
-        axis.text=element_text(size=36),
-        plot.margin = margin(1.5,1.5,1.5,1.5, "cm"),
-        panel.spacing = unit(1, "lines"), 
-        panel.grid = element_line(size = 2), 
-        legend.key.size = unit(4, "lines"),
-        axis.title=element_text(size=36), legend.position = "none")
-```
-
-```{r fig.width=15,fig.height=6}
-g.reliability.all + g.mse.all + g.bias.all
-
-ggsave("../plots/roar_cat_study2_figure2.png")
-ggsave("../plots/roar_cat_study2_figure2.pdf")
-```
-
-```{r}
-g.sem.all <- ggplot(df.aggregrate.learning.curve.all, mapping = aes(x = trialNumTotal,
-                     y = reliability,  
-                     color = type)) +
-  geom_smooth(aes(linetype = variant), se = FALSE) +
-  labs(x = "number of test items",
-       title = "reliability") +
-  ylim(0,1) +
-  xlim(1, 246) +
-  scale_y_continuous(breaks = round(seq(0, 1, by = 0.1),1)) +
-  scale_color_manual(values=c( "#E05A1D", "#8F993E", "grey35")) + 
-   theme(legend.position = "none")
-
-g.mse.all <- ggplot(df.aggregrate.learning.curve.all, mapping = aes(x = trialNumTotal,
-                     y = mse,  
-                     color = type)) +
-  geom_smooth(aes(linetype = variant), se = FALSE) +
-  labs(x = "number of test items",
-       title = "mean squared of error") +
-  ylim(0, 2) +
-  xlim(1, 246) +
-  scale_color_manual(values=c( "#E05A1D", "#8F993E", "grey35")) +
-  theme(legend.position = "bottom")
-
-g.bias.all <- ggplot(df.aggregrate.learning.curve.all, mapping = aes(x = trialNumTotal,
-                     y = bias,
-                     color = type)) +
-  geom_smooth(aes(linetype = variant), se = FALSE) +
-  labs(x = "number of test items",
-       y = "bias",
-       title = "bias") +
-   xlim(1, 246) +
-  scale_color_manual(values=c( "#E05A1D", "#8F993E","grey35")) +
-  theme(legend.position = "right")
-```
-
-
 
