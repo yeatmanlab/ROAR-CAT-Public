@@ -21,7 +21,6 @@ library(dplyr)
 library('ggpubr')
 library(ggplot2)
 library(patchwork)
-
 library(caTools)
 library(ROCR) 
 library(caret)
@@ -33,11 +32,6 @@ library(sjPlot)
 library(mgcv)
 library(ggcorrplot)
 library(WRS2)
-```
-
-# Load Model
-```{r}
-load("../models/theta_brs_model_0.2.rda")
 ```
 
 # Data
@@ -84,7 +78,7 @@ df.swr.trials.clean.validation.final <- df.swr.trials.clean.validation.with.grad
 ```{r}
 df.clean.trials <- df.swr.trials.clean.validation.with.grade %>% 
   filter(completed == TRUE) %>% 
-  left_join(df.swr.trials.clean.validation.final %>% select(pid, timeStarted) %>% add_column(keep = 1) ) %>% 
+  left_join(df.swr.trials.clean.validation.final %>% dplyr :: select(pid, timeStarted) %>% add_column(keep = 1) ) %>% 
   filter(!is.na(keep)) %>% 
   unique()
 ```
@@ -96,7 +90,7 @@ df.data.rt.transformed <- df.clean.trials %>%
   mutate(rt = ifelse(rt == 0, 0.01, rt)) %>% 
   mutate(log_rt = log(rt)) %>% 
   group_by(pid, runId,  block) %>% 
-  summarise(median_log_rt = median(log_rt), median_rt = median(rt), pc = mean(correct)) 
+  dplyr :: summarise(median_log_rt = median(log_rt), median_rt = median(rt), pc = mean(correct)) 
 
 mean_value <- mean(df.data.rt.transformed$median_log_rt)
 sd_value <- sd(df.data.rt.transformed$median_log_rt)
@@ -110,10 +104,9 @@ df.clean.trials.v2 <- df.data.rt.transformed %>%
   ungroup() %>% 
   left_join(df.clean.trials)
 ```
-additional filter
 
 
-We keep particiapnts who doesn't have any block has median response time lower than 2 standard deviation
+We keep particiapnts who doesn't have any block has median response time lower than 3 standard deviation
 ```{r}
 df.included.names <- df.clean.trials.v2 %>% 
   group_by(pid) %>% 
@@ -146,8 +139,6 @@ ggplot(df.excluded.participants, mapping = aes(x = block,
   
 ```
 
-
-
 ```{r}
 df.swr.trials.clean.validation.final.v2 <- df.swr.trials.clean.validation.final %>% 
   filter(!pid %in% df.excluded.participants$pid)
@@ -158,7 +149,8 @@ df.swr.trials.clean.validation.final.v2 <- df.swr.trials.clean.validation.final 
 df.FastBridge.risk <- df.fastbridge_data.linked.clean %>% 
   dplyr :: select(pid, FastBridge.risk = "X2022.2023.FAST.CBM.R.English.Window.2.Risk.Level") %>% 
   filter(!is.na(FastBridge.risk)) %>% 
-  mutate(FastBridge.risk = ifelse(FastBridge.risk == "Ex", 0, 1))
+  mutate(FastBridge.risk = ifelse(FastBridge.risk == "Ex", 0, 1)) %>% 
+  unique()
 ```
 
 ```{r}
@@ -174,10 +166,12 @@ df.analysis.combine <- df.fastbridge_data.linked.clean %>%
   mutate(F.P.risk = if_else(((F.P.March < 7) & (gradelevel == 1))|((F.P.March < 11) & (gradelevel == 2)), 1, 0)) %>% 
   unique() %>% 
   inner_join(df.swr.trials.clean.validation.final.v2, by = c("pid", "gradelevel")) %>% 
-  filter(medianRT >= 500) %>% 
-  mutate(log_median_rt = log(medianRT), grade = paste("grade", gradelevel, " ")) 
+  #filter(medianRT >= 500) %>% 
+  mutate(log_median_rt = log(medianRT), grade = paste("grade", gradelevel, " ")) %>% 
+  filter(!(is.na(FastBridge) & is.na(F.P.March)))
 
 ```
+
 
 With both swr and f.p
 ```{r}
@@ -206,22 +200,25 @@ df.analysis.combine %>%
 
 
 # Correlation Matrices
-
 ```{r}
 g.1 <- df.analysis.combine %>% filter(gradelevel == 1)
 
-fastbrdige.g.1.pbcor <- pbcor(g.1$thetaEstimate, g.1$FastBridge)
-f.p.g1.pbcor <- pbcor(g.1$thetaEstimate, g.1$F.P.March)
+fastbrdige.g.1.pbcor <- pbcor(g.1$thetaEstimate, g.1$FastBridge, ci = TRUE)
+f.p.g1.pbcor <- pbcor(g.1$thetaEstimate, g.1$F.P.March, ci = TRUE)
 
 g.2 <- df.analysis.combine %>% filter(gradelevel == 2)
-fastbrdige.g.2.pbcor <- pbcor(g.2$thetaEstimate, g.2$FastBridge)
-f.p.g2.pbcor <- pbcor(g.2$thetaEstimate, g.2$F.P.March)
+fastbrdige.g.2.pbcor <- pbcor(g.2$thetaEstimate, g.2$FastBridge, ci = TRUE)
+f.p.g2.pbcor <- pbcor(g.2$thetaEstimate, g.2$F.P.March, ci = TRUE)
 
 fastbrdige.g.1.pbcor 
 fastbrdige.g.2.pbcor 
 f.p.g1.pbcor
 f.p.g2.pbcor
 ```
+```{r}
+fastbrdige.g.1.pbcor$cor_ci
+```
+
 
 ```{r}
 df.analysis.combine.longer <- df.analysis.combine %>% 
@@ -230,20 +227,14 @@ df.analysis.combine.longer <- df.analysis.combine %>%
 
 ```
 
-```{r}
-df.analysis.combine %>% filter(!is.na(FastBridge)) %>% 
-  arrange(thetaEstimate)
-```
-
-
-```{r fig.width=3,fig.height=3}
+```{r fig.width=8,fig.height=6}
 g.1.fb <- ggplot(df.analysis.combine %>% filter(!is.na(FastBridge), gradelevel == 1),
        aes(x = thetaEstimate,
            y = FastBridge, color = log_median_rt)) +
   #facet_wrap(~grade) +
   geom_point(size = 3) +
   labs(x = "ROAR-CAT", 
-       y = "FastBridge Early Reading",
+       y = "FAST™ CBMreading",
        title = "Grade 1") + 
   annotate("text", x = -5, y = 200, label = paste0("r = ", round(fastbrdige.g.1.pbcor$cor, digits = 2))) +
   geom_smooth(method = MASS::rlm, color="black", size = 2) +
@@ -258,7 +249,7 @@ g.2.fb <- ggplot(df.analysis.combine %>% filter(!is.na(FastBridge), gradelevel =
   #facet_wrap(~grade) +
   geom_point(size = 3) +
   labs(x = "ROAR-CAT", 
-       y = "FastBridge Early Reading",
+       y = "FAST™ CBMreading",
        title = "Grade 2") + 
   annotate("text", x = -5, y = 200, label = paste0("r = ", round(fastbrdige.g.2.pbcor$cor, digits = 2))) +
   geom_smooth(method = MASS::rlm, color="black", size = 2) +
@@ -318,6 +309,7 @@ ggsave("../plots/roar_cat_study3_figure1.pdf")
 
 # Check correlation by number of test items
 
+
 ```{r}
 df.trials.combined <- df.clean.trials.v3 %>% 
   filter(corpusId != "corpusNew") %>% 
@@ -334,7 +326,7 @@ df.trials.combined.delete.new <- df.trials.combined %>%
   group_by(trialNumTotal) %>% 
   tally() %>% 
   add_column(trialNumTotal.new = seq(1, 84, 1)) %>% 
-  select(-n))
+  dplyr ::select(-n))
 ```
 
 ```{r}
@@ -378,13 +370,13 @@ g.c.1 + g.c.2
 ```{r}
 df.FP.cor.curve <- df.clean.trials.v3 %>% 
   filter(trialNumTotal == 1) %>% 
-  select(pid, runId,  time_elapsed, gradelevel) %>% 
+  dplyr ::select(pid, runId,  time_elapsed, gradelevel) %>% 
   dplyr :: rename(init_elapsed = time_elapsed) %>% 
   right_join(df.clean.trials.v3) %>% 
   filter(!is.na(init_elapsed)) %>% 
   mutate(time_diff = abs(time_elapsed-init_elapsed)) %>%
-  select(pid, runId,  trialNumTotal, time_diff, thetaEstimate, gradelevel) %>% 
-  left_join(df.analysis.combine %>% select(pid, F.P.March, FastBridge), by = c("pid")) %>% 
+  dplyr ::select(pid, runId,  trialNumTotal, time_diff, thetaEstimate, gradelevel) %>% 
+  left_join(df.analysis.combine %>% dplyr ::select(pid, F.P.March, FastBridge), by = c("pid")) %>% 
   group_by(trialNumTotal, gradelevel) %>% 
   filter(!is.na(F.P.March)) %>% 
   summarise(correlation = WRS2 :: pbcor(thetaEstimate, F.P.March, alpha = 0.05)$cor, time = mean(time_diff)/1000) %>%
@@ -392,13 +384,13 @@ df.FP.cor.curve <- df.clean.trials.v3 %>%
 
 df.FastBridge.cor.curve <- df.clean.trials.v3 %>% 
   filter(trialNumTotal == 1) %>% 
-  select(pid, runId,  time_elapsed, gradelevel) %>% 
+  dplyr ::select(pid, runId,  time_elapsed, gradelevel) %>% 
   dplyr :: rename(init_elapsed = time_elapsed) %>% 
   right_join(df.clean.trials.v3) %>% 
    filter(!is.na(init_elapsed)) %>% 
   mutate(time_diff = abs(time_elapsed-init_elapsed)) %>%
-  select(pid, runId,  trialNumTotal, time_diff, thetaEstimate, gradelevel) %>% 
-  left_join(df.analysis.combine %>% select( pid, F.P.March, FastBridge), by = c("pid")) %>% 
+  dplyr ::select(pid, runId,  trialNumTotal, time_diff, thetaEstimate, gradelevel) %>% 
+  left_join(df.analysis.combine %>% dplyr ::select( pid, F.P.March, FastBridge), by = c("pid")) %>% 
   group_by(trialNumTotal, gradelevel) %>% 
   filter(!is.na(FastBridge)) %>% 
   summarise(correlation = WRS2 :: pbcor(thetaEstimate, FastBridge, alpha = 0.05)$cor, time = mean(time_diff)/1000) %>%
@@ -410,7 +402,7 @@ g.c.1 <- ggplot(df.FastBridge.cor.curve, mapping = aes(x = time,y = correlation)
   geom_smooth(se = FALSE, color = "black", aes(linetype = grade)) +
   labs(x = "Test length (second)",
        y = "Correlation", 
-       title = "FastBrdige vs. ROAR-CAT") + 
+       title = "FAST™ CBMreading vs. ROAR-CAT") + 
   scale_y_continuous(limits = c(0.3, 1), breaks = round(seq(0, 1, by = 0.1),1)) +
   scale_x_continuous(limits = c(0, 360), breaks = round(seq(0, 360, by = 60),1)) +
   theme(legend.position = "none") + 
@@ -421,17 +413,15 @@ g.c.2 <- ggplot(df.FP.cor.curve, mapping = aes(x = time,
   geom_smooth(se = FALSE, color = "black", aes(linetype = grade)) +
   labs(x = "Test length (second)",
        y = "Correlation", 
-       title = "F.P and ROAR-CAT") + 
+       title = "Fountas & Pinnell and ROAR-CAT") + 
   scale_y_continuous(limits = c(0.3, 1), breaks = round(seq(0, 1, by = 0.1),1)) +
   scale_x_continuous(limits = c(0, 360), breaks = round(seq(0, 360, by = 60),1)) +
   scale_color_manual(values=c("black", "grey30")) + 
-  theme(legend.position = "right") 
+  theme(legend.position = "bottom") 
 
 g.c.1 + g.c.2
 
 ggsave("../plots/roar_cat_study3_figure2.png")
 ggsave("../plots/roar_cat_study3_figure2.pdf")
 ```
-
-
 
